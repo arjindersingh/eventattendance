@@ -255,7 +255,7 @@ if (isset($_GET['action'])) {
             'pass' => $password,
             'sender' => getenv('BHSMS_SENDER') ?: 'BUZWAP',
             'phone' => $phone,
-            'text' => (string) ($_SESSION['bhsms_template'] ?? (getenv('BHSMS_TEMPLATE') ?: 'education_conclave_qr_pass')),
+            'text' => preg_match('/^[A-Za-z0-9_]{1,100}$/', (string) ($input['template'] ?? '')) ? (string) $input['template'] : (string) ($_SESSION['bhsms_template'] ?? (getenv('BHSMS_TEMPLATE') ?: 'education_conclave_qr_pass')),
             'priority' => 'wa',
             'stype' => 'normal',
             'Params' => implode(',', array_map(static fn(string $key): string => str_replace(',', ' ', (string) ($row[$key] ?? '')), ['name', 'designation', 'institution'])),
@@ -414,6 +414,7 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
         document.querySelector('#load-sheet').addEventListener('click', loadSelectedSheet);
         document.querySelector('#save-api-credentials').addEventListener('click', saveApiCredentials);
         document.querySelector('#save-template').addEventListener('click', saveTemplate);
+        document.querySelector('#whatsapp-template').addEventListener('input', event => { const value = event.target.value.trim(); if (/^[A-Za-z0-9_]{1,100}$/.test(value)) apiTemplate = value; });
     }
 
     async function loadSelectedSheet() {
@@ -556,7 +557,7 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
                     const response = await fetch('?action=create-and-send', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ record: row, image })
+                        body: JSON.stringify({ record: row, image, template: apiTemplate })
                     });
                     const delivery = await response.json();
                     if (!response.ok || !delivery.saved) throw new Error(delivery.error || 'Could not save this QR image.');
@@ -597,7 +598,7 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
         if (typeof jsQR !== 'function') { toast('QR decoder is not loaded. Reload the page.'); return; }
         const status = document.querySelector('#scan-result');
         try {
-            detector = { detect: detectWithJsQr };
+            detector = 'BarcodeDetector' in window ? new BarcodeDetector({ formats: ['qr_code'] }) : { detect: detectWithJsQr };
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
             } catch (constraintError) {
@@ -606,18 +607,19 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
             const video = document.querySelector('#camera-video'); video.srcObject = stream; await video.play();
             document.querySelector('#camera-empty').classList.add('hidden'); document.querySelector('#start-camera').classList.add('hidden'); document.querySelector('#stop-camera').classList.remove('hidden');
             status.textContent = 'Camera is ready. Point it at a QR code.'; status.classList.remove('hidden');
-            scanTimer = setInterval(scanFrame, 250);
+            scanTimer = setInterval(scanFrame, 100);
         } catch (error) { toast(error.name === 'NotAllowedError' ? 'Camera permission was denied.' : 'Unable to start the camera: ' + (error.message || error.name)); stopScanner(); }
     }
 
     async function detectWithJsQr(video) {
         const canvas = detectWithJsQr.canvas ||= document.createElement('canvas');
-        const scale = Math.min(1, 720 / video.videoWidth);
-        canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
-        const context = canvas.getContext('2d', { willReadFrequently: true });
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const image = context.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(image.data, image.width, image.height);
+        const scale = Math.min(1, 640 / video.videoWidth);
+        const width = Math.round(video.videoWidth * scale), height = Math.round(video.videoHeight * scale);
+        if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+        const context = detectWithJsQr.context ||= canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(video, 0, 0, width, height);
+        const image = context.getImageData(0, 0, width, height);
+        const code = jsQR(image.data, width, height, { inversionAttempts: 'dontInvert' });
         return code ? [{ rawValue: code.data }] : [];
     }
 
@@ -659,7 +661,7 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
     function resumeScanning(delay) {
         scanTimer = setTimeout(() => {
             scanBusy = false;
-            if (stream) scanTimer = setInterval(scanFrame, 250);
+            if (stream) scanTimer = setInterval(scanFrame, 100);
         }, delay);
     }
 
