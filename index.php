@@ -157,6 +157,11 @@ if (isset($_GET['action'])) {
         session_write_close();
         respondJson(['saved' => true, 'username' => $username, 'configured' => true, 'publicUrl' => $publicUrl]);
     }
+    if ($action === 'sent' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+        $path = __DIR__ . '/data/sent.json';
+        $log = is_file($path) ? json_decode((string) file_get_contents($path), true) : [];
+        respondJson(['sent' => is_array($log) ? $log : new stdClass()]);
+    }
     if ($action === 'attendance' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         $path = __DIR__ . '/data/attendance.json';
         $records = is_file($path) ? json_decode((string) file_get_contents($path), true) : [];
@@ -275,9 +280,29 @@ if (isset($_GET['action'])) {
         $httpStatus = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
         curl_close($curl);
         $sent = $response !== false && $httpStatus >= 200 && $httpStatus < 300 && !preg_match('/\b(error|failed|invalid|denied)\b/i', (string) $response);
+        $sentAt = '';
+        if ($sent) {
+            $sentAt = date(DATE_ATOM);
+            $logPath = __DIR__ . '/data/sent.json';
+            $logHandle = fopen($logPath, 'c+');
+            if ($logHandle && flock($logHandle, LOCK_EX)) {
+                $log = json_decode((string) stream_get_contents($logHandle), true);
+                $log = is_array($log) ? $log : [];
+                $log[$sn] = ['sentAt' => $sentAt, 'phone' => $phone, 'template' => $parameters['text']];
+                ftruncate($logHandle, 0);
+                rewind($logHandle);
+                fwrite($logHandle, json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                fflush($logHandle);
+                flock($logHandle, LOCK_UN);
+            }
+            if ($logHandle) {
+                fclose($logHandle);
+            }
+        }
         respondJson([
             'saved' => true,
             'sent' => $sent,
+            'sentAt' => $sentAt,
             'error' => $sent ? '' : ($curlError ?: trim((string) $response) ?: 'WhatsApp provider returned HTTP ' . $httpStatus),
             'providerResponse' => substr(trim((string) $response), 0, 300),
             'qrFile' => $sn . '.jpg',
@@ -381,6 +406,9 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
     let spreadsheetError = '';
     let activeTab = 'scan-qr';
     let attendanceRows = [];
+    let sentLog = {};
+    const formatSent = iso => { const d = new Date(iso); return isNaN(d) ? '' : `${String(d.getDate()).padStart(2, '0')}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+    const sentLabel = sn => sentLog[sn] ? `Sent ${formatSent(sentLog[sn].sentAt)}` : 'Not sent';
     let tracks = serverMusic.map(name => ({ name, url: encodeURIComponent(name) }));
     let trackIndex = -1;
     let stream = null;
@@ -516,12 +544,16 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
     }
 
     function renderSendQr() {
-        panel.innerHTML = `<div class="panel-heading"><div><h2>Create and send QR passes</h2><p class="subheading">Select rows to create an SN QR, save it in QR/, and send it to the attendee's WhatsApp.</p></div><button class="button primary" id="create-qr" ${records.length ? '' : 'disabled'}>Create and Send QR</button></div><div class="source-summary"><span>Source: <strong>${escapeHtml(sourceName || 'No spreadsheet loaded')}</strong></span><span>${records.length} records</span></div><div class="table-wrap"><table><thead><tr><th><input id="select-all" type="checkbox" aria-label="Select all rows" ${records.length ? '' : 'disabled'}></th><th>SN</th><th>Name</th><th>Designation</th><th>Institution</th><th>Whatsapp</th><th>Send status</th></tr></thead><tbody>${records.length ? records.map((row, index) => `<tr><td><input type="checkbox" class="row-select" value="${index}" aria-label="Select ${escapeHtml(row.name || row.sn)}"></td><td>${escapeHtml(row.sn)}</td><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.designation)}</td><td>${escapeHtml(row.institution)}</td><td>${escapeHtml(row.whatsapp)}</td><td data-delivery-status="${index}">Not sent</td></tr>`).join('') : '<tr><td colspan="7" class="empty">Load a spreadsheet in the Spreadsheet tab to see records here.</td></tr>'}</tbody></table></div>`;
+        panel.innerHTML = `<div class="panel-heading"><div><h2>Create and send QR passes</h2><p class="subheading">Select rows to create an SN QR, save it in QR/, and send it to the attendee's WhatsApp.</p></div><button class="button primary" id="create-qr" ${records.length ? '' : 'disabled'}>Create and Send QR</button></div><div class="source-summary"><span>Source: <strong>${escapeHtml(sourceName || 'No spreadsheet loaded')}</strong></span><span>${records.length} records</span></div><div class="table-wrap"><table><thead><tr><th><input id="select-all" type="checkbox" aria-label="Select all rows" ${records.length ? '' : 'disabled'}></th><th>SN</th><th>Name</th><th>Designation</th><th>Institution</th><th>Whatsapp</th><th>Send status</th></tr></thead><tbody>${records.length ? records.map((row, index) => `<tr><td><input type="checkbox" class="row-select" value="${index}" aria-label="Select ${escapeHtml(row.name || row.sn)}"></td><td>${escapeHtml(row.sn)}</td><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.designation)}</td><td>${escapeHtml(row.institution)}</td><td>${escapeHtml(row.whatsapp)}</td><td data-delivery-status="${index}">${escapeHtml(sentLabel(row.sn))}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">Load a spreadsheet in the Spreadsheet tab to see records here.</td></tr>'}</tbody></table></div>`;
         const sendTable = panel.querySelector('.table-wrap table');
         sendTable.classList.add('send-qr-table');
         sendTable.querySelectorAll('thead th:last-child, tbody tr td:last-child:not([colspan])').forEach(cell => cell.classList.add('whatsapp-column'));
         document.querySelector('#select-all')?.addEventListener('change', event => panel.querySelectorAll('.row-select').forEach(box => { box.checked = event.target.checked; }));
         document.querySelector('#create-qr')?.addEventListener('click', createSelectedQrs);
+        fetch('?action=sent').then(response => response.json()).then(result => {
+            sentLog = result.sent || {};
+            panel.querySelectorAll('[data-delivery-status]').forEach(cell => { const row = records[Number(cell.dataset.deliveryStatus)]; if (row && cell.textContent === 'Not sent') cell.textContent = sentLabel(row.sn); });
+        }).catch(() => {});
     }
 
     function qrJpeg(sn) {
@@ -563,7 +595,8 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
                     if (!response.ok || !delivery.saved) throw new Error(delivery.error || 'Could not save this QR image.');
                     if (delivery.sent) {
                         sentCount++;
-                        status.textContent = 'Sent';
+                        sentLog[row.sn] = { sentAt: delivery.sentAt };
+                        status.textContent = sentLabel(row.sn);
                     } else {
                         failedCount++;
                         status.textContent = `Saved, not sent: ${delivery.error || 'Provider did not confirm delivery.'}`;
