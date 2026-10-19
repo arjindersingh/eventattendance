@@ -706,7 +706,19 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
             return Promise.resolve();
         }
         window.speechSynthesis.cancel();
-        const announcement = ['Welcome', row.name, row.designation, row.institution].filter(value => String(value || '').trim()).join(', ');
+      //const announcement = ['Welcome', row.name, row.designation, row.institution].filter(value => String(value || '').trim()).join(', ');
+        const name = String(row.name ?? '').trim();
+        const designation = String(row.designation ?? '').trim();
+        const institution = String(row.institution ?? '').trim();
+
+        const role = [
+        designation,
+        institution
+        ].filter(Boolean).join(' of ');
+
+        const guest = [name, role].filter(Boolean).join(', ');
+
+        const announcement = `Welcome, ${guest}, to the School Felicitation Ceremony for Academic Excellence.`;
         const utterance = new SpeechSynthesisUtterance(announcement);
         return new Promise(resolve => {
             let finished = false;
