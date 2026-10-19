@@ -720,6 +720,9 @@ $defaultSpreadsheetJson = json_encode($defaultSpreadsheet, JSON_HEX_TAG | JSON_H
 
         const announcement = `Welcome, ${guest}, to the School Felicitation Ceremony for Academic Excellence.`;
         const utterance = new SpeechSynthesisUtterance(announcement);
+        utterance.lang = 'en-IN';
+        const indianVoices = window.speechSynthesis.getVoices().filter(voice => /^en-IN$/i.test(voice.lang));
+        utterance.voice = indianVoices.find(voice => /female|aditi|heera|kalpana|neerja|raveena/i.test(voice.name)) || indianVoices[0] || null;
         return new Promise(resolve => {
             let finished = false;
             let timeout;
